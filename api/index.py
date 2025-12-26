@@ -1,20 +1,20 @@
 from flask import Flask, Response, request, render_template_string, jsonify
 import requests
 import uuid
-from urllib.parse import urljoin, urlparse
+import base64
+from urllib.parse import urljoin
 
 app = Flask(__name__)
 
 # --- কনফিগারেশন ---
 ADMIN_USERNAME = "admin"
-ADMIN_PASSWORD = "mypassword123" # আপনার পাসওয়ার্ড দিন
-APP_TITLE = "Python IPTV Panel (Vercel)"
+ADMIN_PASSWORD = "mypassword123" 
+APP_TITLE = "Pro Hidden IPTV (Vercel)"
 
-# --- মেমোরি ডাটাবেস (Temporary Storage) ---
-# Vercel রিস্টার্ট হলে এই ডাটা মুছে যাবে
+# --- মেমোরি ডাটাবেস ---
 channels = [] 
 
-# --- অথেন্টিকেশন চেকার ---
+# --- অথেন্টিকেশন ---
 def check_auth():
     auth = request.authorization
     if not auth or auth.username != ADMIN_USERNAME or auth.password != ADMIN_PASSWORD:
@@ -22,131 +22,77 @@ def check_auth():
     return True
 
 def auth_fail():
-    return Response(
-        'Could not verify your access level for that URL.\n'
-        'You have to login with proper credentials', 401,
-        {'WWW-Authenticate': 'Basic realm="Login Required"'})
+    return Response('Login Required', 401, {'WWW-Authenticate': 'Basic realm="Login Required"'})
 
-# --- ১. হোমপেজ ---
+# --- ১. হোম ও এডমিন প্যানেল ---
 @app.route('/')
 def home():
-    return "IPTV Proxy Server is Running on Vercel..."
+    return "Hidden Proxy Active"
 
-# --- ২. এডমিন প্যানেল (HTML UI) ---
 @app.route('/admin')
 def admin_panel():
-    if not check_auth():
-        return auth_fail()
-
-    # HTML টেমপ্লেট (এডমিন পেজ)
+    if not check_auth(): return auth_fail()
     html = f"""
     <!DOCTYPE html>
     <html>
-    <head>
-        <title>{APP_TITLE}</title>
-        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-        <style>body{{padding:20px; background:#f4f4f4;}}</style>
-    </head>
-    <body>
+    <head><title>{APP_TITLE}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet"></head>
+    <body class="p-4 bg-light">
         <div class="container">
-            <h2 class="mb-4">📡 Channel Manager (RAM Storage)</h2>
-            <div class="alert alert-warning">Warning: Data will be lost if Vercel restarts!</div>
-            
-            <div class="card p-3 mb-4">
-                <h5>Add New Channel</h5>
+            <h3>🛡️ Fully Hidden Channel Manager</h3>
+            <div class="alert alert-info">Now supports hiding inner absolute URLs!</div>
+            <div class="card p-3 mb-3">
                 <form id="addForm">
                     <div class="row">
-                        <div class="col-md-3"><input type="text" id="name" class="form-control" placeholder="Name" required></div>
-                        <div class="col-md-3"><input type="text" id="group" class="form-control" placeholder="Group"></div>
-                        <div class="col-md-3"><input type="text" id="logo" class="form-control" placeholder="Logo URL"></div>
-                        <div class="col-md-3"><input type="text" id="url" class="form-control" placeholder="Source URL (http ok)" required></div>
+                        <div class="col-md-3"><input id="name" class="form-control" placeholder="Name" required></div>
+                        <div class="col-md-3"><input id="group" class="form-control" placeholder="Group"></div>
+                        <div class="col-md-3"><input id="logo" class="form-control" placeholder="Logo URL"></div>
+                        <div class="col-md-3"><input id="url" class="form-control" placeholder="Source URL" required></div>
                     </div>
                     <button type="submit" class="btn btn-primary mt-3">Add Channel</button>
                 </form>
             </div>
-
-            <div class="card p-3">
-                <h5>Current Channels ({len(channels)})</h5>
-                <table class="table table-striped">
-                    <thead><tr><th>Logo</th><th>Name</th><th>Proxy Link</th><th>Action</th></tr></thead>
-                    <tbody id="list">
-                        </tbody>
-                </table>
-                <div class="mt-3">
-                    <strong>Your Playlist URL:</strong> 
-                    <a href="/playlist.m3u" target="_blank">/playlist.m3u</a>
-                </div>
-            </div>
+            <table class="table table-striped bg-white">
+                <tbody id="list"></tbody>
+            </table>
+            <a href="/playlist.m3u" target="_blank" class="btn btn-success">Download Playlist</a>
         </div>
-
         <script>
-            // পেজ লোড হলে চ্যানেল লিস্ট আনবে
-            async function loadChannels() {{
+            async function load() {{
                 const res = await fetch('/api/list');
                 const data = await res.json();
-                const tbody = document.getElementById('list');
-                tbody.innerHTML = '';
-                
-                data.forEach(c => {{
-                    const row = `<tr>
-                        <td><img src="${{c.logo}}" height="30"></td>
-                        <td>${{c.name}}</td>
-                        <td style="font-size:12px; color:gray">/play/${{c.id}}/index.m3u8</td>
-                        <td><button onclick="deleteCh('${{c.id}}')" class="btn btn-danger btn-sm">Delete</button></td>
-                    </tr>`;
-                    tbody.innerHTML += row;
-                }});
+                document.getElementById('list').innerHTML = data.map(c => `
+                    <tr><td><img src="${{c.logo}}" height="30"></td><td>${{c.name}}</td>
+                    <td><small>/play/${{c.id}}/master.m3u8</small></td>
+                    <td><button onclick="del('${{c.id}}')" class="btn btn-danger btn-sm">Del</button></td></tr>
+                `).join('');
             }}
-            loadChannels();
-
-            // চ্যানেল অ্যাড করা
-            document.getElementById('addForm').addEventListener('submit', async (e) => {{
+            load();
+            document.getElementById('addForm').onsubmit = async (e) => {{
                 e.preventDefault();
-                const data = {{
-                    name: document.getElementById('name').value,
-                    group: document.getElementById('group').value,
-                    logo: document.getElementById('logo').value,
-                    url: document.getElementById('url').value
-                }};
                 await fetch('/api/save', {{
-                    method: 'POST',
-                    headers: {{'Content-Type': 'application/json'}},
-                    body: JSON.stringify(data)
+                    method: 'POST', headers: {{'Content-Type': 'application/json'}},
+                    body: JSON.stringify({{
+                        name: document.getElementById('name').value,
+                        group: document.getElementById('group').value,
+                        logo: document.getElementById('logo').value,
+                        url: document.getElementById('url').value
+                    }})
                 }});
-                document.getElementById('addForm').reset();
-                loadChannels();
-            }});
-
-            // চ্যানেল ডিলেট করা
-            async function deleteCh(id) {{
-                if(confirm('Delete this channel?')) {{
-                    await fetch('/api/delete', {{
-                        method: 'POST',
-                        headers: {{'Content-Type': 'application/json'}},
-                        body: JSON.stringify({{id}})
-                    }});
-                    loadChannels();
-                }}
-            }}
+                e.target.reset(); load();
+            }};
+            async function del(id) {{ await fetch('/api/delete', {{ method: 'POST', headers: {{'Content-Type': 'application/json'}}, body: JSON.stringify({{id}}) }}); load(); }}
         </script>
-    </body>
-    </html>
+    </body></html>
     """
     return render_template_string(html)
 
-# --- ৩. API Endpoints (ডাটা সেভ/ডিলেট) ---
+# --- API Endpoints ---
 @app.route('/api/save', methods=['POST'])
 def api_save():
     data = request.json
-    new_channel = {
-        "id": str(uuid.uuid4())[:8],
-        "name": data.get("name"),
-        "group": data.get("group", "General"),
-        "logo": data.get("logo", ""),
-        "url": data.get("url")
-    }
-    channels.append(new_channel)
-    return jsonify({"status": "success", "id": new_channel["id"]})
+    channels.append({ "id": str(uuid.uuid4())[:8], **data })
+    return jsonify({"status": "ok"})
 
 @app.route('/api/delete', methods=['POST'])
 def api_delete():
@@ -156,91 +102,105 @@ def api_delete():
     return jsonify({"status": "deleted"})
 
 @app.route('/api/list')
-def api_list():
-    return jsonify(channels)
+def api_list(): return jsonify(channels)
 
-# --- ৪. M3U প্লেলিস্ট জেনারেটর ---
+# --- ২. M3U প্লেলিস্ট জেনারেটর ---
 @app.route('/playlist.m3u')
 def playlist():
-    host_url = request.url_root.rstrip('/')
-    # HTTPS ফোর্স করা (যদি Vercel HTTP তে থাকে)
-    if "http://" in host_url and "localhost" not in host_url:
-        host_url = host_url.replace("http://", "https://")
-
+    host = request.url_root.rstrip('/').replace("http://", "https://")
     content = "#EXTM3U\n"
     for ch in channels:
-        # প্রক্সি লিঙ্ক ফরম্যাট: /play/<id>/index.m3u8
-        proxy_link = f"{host_url}/play/{ch['id']}/index.m3u8"
-        content += f'#EXTINF:-1 tvg-logo="{ch["logo"]}" group-title="{ch["group"]}", {ch["name"]}\n'
-        content += f"{proxy_link}\n"
-    
+        content += f'#EXTINF:-1 tvg-logo="{ch.get("logo")}" group-title="{ch.get("group")}", {ch.get("name")}\n'
+        content += f"{host}/play/{ch['id']}/master.m3u8\n"
     return Response(content, mimetype='text/plain')
 
-# --- ৫. প্রক্সি স্ট্রিমিং লজিক (সবচেয়ে গুরুত্বপূর্ণ) ---
+# --- ৩. পাওয়ারফুল প্রক্সি ও রিরাইটার ---
 @app.route('/play/<channel_id>/<path:filename>')
 def proxy_stream(channel_id, filename):
-    # চ্যানেল খোঁজা
     channel = next((c for c in channels if c['id'] == channel_id), None)
-    if not channel:
-        return "Channel not found or Server Restarted (Data Lost)", 404
+    if not channel: return "Channel Not Found", 404
 
-    # টার্গেট URL তৈরি (Relative Path Support)
-    # মেইন URL: http://server.com/live/stream.m3u8
-    # Base URL: http://server.com/live/
+    # টার্গেট URL ডিটেকশন
+    target_url = ""
     
-    original_url = channel['url']
-    base_url = original_url.rsplit('/', 1)[0] + '/'
-
-    if filename == "index.m3u8":
-        target_url = original_url
+    # ক) যদি এনক্রিপ্ট করা লিংক হয় (__enc__)
+    if filename.startswith("__enc__"):
+        try:
+            # এনক্রিপ্ট অংশটুকু বের করা (__enc__ এর পরেরটুকু)
+            # ফাইলের এক্সটেনশন (.m3u8/.ts) ফেলে দেওয়া হতে পারে, বা রাখা হতে পারে
+            encoded_part = filename.replace("__enc__", "").split(".")[0] # এক্সটেনশন বাদে
+            
+            # Base64 ডিকোড করা
+            decoded_bytes = base64.urlsafe_b64decode(encoded_part + "==") # প্যাডিং ফিক্স
+            target_url = decoded_bytes.decode('utf-8')
+        except Exception as e:
+            return f"Decryption Error: {str(e)}", 400
+            
+    # খ) যদি সাধারণ রিকোয়েস্ট হয় (যেমন master.m3u8)
+    elif filename == "master.m3u8":
+        target_url = channel['url']
+        
+    # গ) যদি রিলেটিভ পাথ হয়
     else:
-        # যদি সাব-ফোল্ডার বা TS ফাইল হয়
+        # মেইন চ্যানেলের বেস URL বের করা
+        base_url = channel['url'].rsplit('/', 1)[0] + '/'
         target_url = urljoin(base_url, filename)
 
+    # --- রিকোয়েস্ট পাঠানো ---
     try:
-        # 1. সোর্স থেকে ডাটা আনা (Python Requests দিয়ে, তাই যেকোনো পোর্ট সাপোর্ট করবে)
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-            "Referer": base_url
+            "Referer": target_url
         }
         
-        resp = requests.get(target_url, headers=headers, stream=True, timeout=10, verify=False)
+        # SSL ভেরিফিকেশন বন্ধ রাখা হয়েছে (স্পিড ও কম্প্যাটিবিলিটির জন্য)
+        resp = requests.get(target_url, headers=headers, stream=True, timeout=20, verify=False)
         
-        if resp.status_code != 200:
-            return Response(f"Source Error: {resp.status_code}", status=resp.status_code)
-
-        # 2. রেসপন্স প্রসেস করা
-        content = resp.content
-        response_headers = {
-            'Access-Control-Allow-Origin': '*'
-        }
-
-        # 3. যদি M3U8 ফাইল হয়, লিংক রিরাইট (Rewrite) করতে হবে
+        # --- M3U8 রিরাইট লজিক (সব লিংক হাইড করা) ---
         if filename.endswith('.m3u8') or 'mpegurl' in resp.headers.get('Content-Type', ''):
-            text_content = content.decode('utf-8', errors='ignore')
+            text_content = resp.text
             new_lines = []
             
+            # হোস্ট URL (যেমন: https://myapp.vercel.app)
+            host_url = request.url_root.rstrip('/').replace("http://", "https://")
+            base_proxy_path = f"{host_url}/play/{channel_id}"
+
             for line in text_content.splitlines():
                 line = line.strip()
-                if line and not line.startswith('#'):
-                    # লিংক পেলে সেটার নাম বা পাথ রেখে দেওয়া, যাতে ব্রাউজার আবার আমাদের কাছেই চায়
-                    # ব্রাউজার অটোমেটিক বর্তমান URL (i.e. /play/id/...) এর সাথে এই নাম যোগ করবে
-                    new_lines.append(line) 
-                else:
+                if not line or line.startswith('#'):
                     new_lines.append(line)
-            
-            content = "\n".join(new_lines).encode('utf-8')
-            response_headers['Content-Type'] = 'application/vnd.apple.mpegurl'
-        else:
-            # TS ফাইল বা ভিডিও ডাটা
-            response_headers['Content-Type'] = resp.headers.get('Content-Type', 'video/mp2t')
+                    continue
+                
+                # এখন লাইনটি একটি লিংক (URI)
+                original_link = line
+                
+                # যদি লিংকটি Absolute হয় (http দিয়ে শুরু)
+                if original_link.startswith('http'):
+                    # লিংকটিকে Base64 এ কনভার্ট করা
+                    encoded = base64.urlsafe_b64encode(original_link.encode('utf-8')).decode('utf-8')
+                    # নতুন লিংক তৈরি: /play/id/__enc__XYZ.m3u8
+                    # শেষে .m3u8 বা .ts যোগ করা ভালো যেন প্লেয়ার কনফিউজ না হয়
+                    ext = ".m3u8" if ".m3u8" in original_link else ".ts"
+                    new_link = f"{base_proxy_path}/__enc__{encoded}{ext}"
+                    new_lines.append(new_link)
+                
+                # যদি রিলেটিভ পাথ হয়
+                else:
+                    # রিলেটিভ পাথকেও আমরা প্রক্সির মধ্যে রাখব
+                    # এটা অটোমেটিক কাজ করবে কারণ ব্রাউজার বর্তমান পাথের সাথে এটাকে যোগ করবে
+                    new_lines.append(original_link)
 
-        return Response(content, status=200, headers=response_headers)
+            return Response("\n".join(new_lines), headers={
+                'Content-Type': 'application/vnd.apple.mpegurl',
+                'Access-Control-Allow-Origin': '*'
+            })
+
+        # --- TS বা ভিডিও ফাইল সরাসরি পাস করা ---
+        return Response(resp.content, status=resp.status_code, headers={
+            'Content-Type': resp.headers.get('Content-Type', 'video/mp2t'),
+            'Access-Control-Allow-Origin': '*'
+        })
 
     except Exception as e:
-        return Response(f"Proxy Error: {str(e)}", status=500)
-
-# লোকাল টেস্টের জন্য
-if __name__ == '__main__':
-    app.run(debug=True, port=5000)
-    
+        return Response(str(e), 500)
+        
